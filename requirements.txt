@@ -4,3 +4,5 @@ openpyxl
 pytesseract
 Pillow
 PyMuPDF
+opencv-python-headless
+numpy
