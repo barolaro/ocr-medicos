@@ -4,26 +4,85 @@ import pytesseract
 import fitz
 import re
 import io
+import cv2
+import numpy as np
 
-from PIL import Image
+from PIL import Image, ImageEnhance
 
 st.set_page_config(page_title="OCR Médicos", page_icon="📄", layout="wide")
 
-st.title("📄 OCR Médicos")
-st.write("Convierte PDF escaneado a TXT y Excel mediante OCR.")
+st.title("📄 OCR Médicos Mejorado")
+st.write("OCR optimizado para PDFs escaneados con tablas y marcaciones.")
 
 archivo = st.file_uploader("Sube un archivo PDF", type=["pdf"])
 
 def limpiar_texto(texto):
     texto = str(texto)
     texto = re.sub(r"[\x00-\x08\x0B-\x0C\x0E-\x1F]", "", texto)
-    return texto.replace("\f", "").strip()
+    texto = texto.replace("\f", "")
+    texto = re.sub(r"\n{3,}", "\n\n", texto)
+    return texto.strip()
+
+def mejorar_imagen(pil_img):
+    # Convertir PIL a OpenCV
+    img = np.array(pil_img)
+
+    # Escala de grises
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+
+    # Aumentar contraste
+    gray = cv2.equalizeHist(gray)
+
+    # Reducir ruido
+    gray = cv2.fastNlMeansDenoising(gray, h=30)
+
+    # Binarización adaptativa
+    thresh = cv2.adaptiveThreshold(
+        gray,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        31,
+        15
+    )
+
+    # Agrandar imagen
+    thresh = cv2.resize(
+        thresh,
+        None,
+        fx=1.5,
+        fy=1.5,
+        interpolation=cv2.INTER_CUBIC
+    )
+
+    return Image.fromarray(thresh)
 
 if archivo is not None:
     st.success("PDF cargado correctamente")
     st.write("Nombre:", archivo.name)
 
-    if st.button("Procesar OCR"):
+    col1, col2 = st.columns(2)
+
+    with col1:
+        dpi = st.selectbox(
+            "Calidad OCR",
+            [2, 2.5, 3],
+            index=1,
+            help="Más alto = mejor OCR, pero más lento"
+        )
+
+    with col2:
+        modo_ocr = st.selectbox(
+            "Modo OCR",
+            [
+                "--oem 3 --psm 6",
+                "--oem 3 --psm 11",
+                "--oem 3 --psm 4"
+            ],
+            index=0
+        )
+
+    if st.button("Procesar OCR Mejorado"):
         pdf_bytes = archivo.read()
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
@@ -33,13 +92,25 @@ if archivo is not None:
         barra = st.progress(0)
 
         for i, page in enumerate(doc, start=1):
-            pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            st.write(f"Procesando página {i} de {len(doc)}")
+
+            pix = page.get_pixmap(
+                matrix=fitz.Matrix(dpi, dpi),
+                alpha=False
+            )
+
+            img = Image.frombytes(
+                "RGB",
+                [pix.width, pix.height],
+                pix.samples
+            )
+
+            img_mejorada = mejorar_imagen(img)
 
             texto = pytesseract.image_to_string(
-                img,
+                img_mejorada,
                 lang="spa",
-                config="--oem 3 --psm 6"
+                config=modo_ocr
             )
 
             texto = limpiar_texto(texto)
@@ -64,13 +135,13 @@ if archivo is not None:
         st.download_button(
             "Descargar TXT",
             data=texto_total.encode("utf-8"),
-            file_name="resultado_ocr.txt",
+            file_name="resultado_ocr_mejorado.txt",
             mime="text/plain"
         )
 
         st.download_button(
             "Descargar Excel",
             data=excel_buffer,
-            file_name="resultado_ocr.xlsx",
+            file_name="resultado_ocr_mejorado.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
