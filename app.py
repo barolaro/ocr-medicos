@@ -1,43 +1,23 @@
-# ==========================================================
-# OCR PDF GRANDE A TXT Y EXCEL - GOOGLE COLAB
-# Procesa página por página para no usar toda la RAM
-# ==========================================================
-
-!apt-get update -qq
-!apt-get install -y tesseract-ocr tesseract-ocr-spa poppler-utils
-!pip install -q pytesseract pdf2image pandas openpyxl PyPDF2 pillow
-
-import os
-import re
-import gc
+import streamlit as st
 import pandas as pd
-import pytesseract
-from pdf2image import convert_from_path
-from google.colab import files
+import re
+import io
+
 from PyPDF2 import PdfReader
 
-# ==========================================================
-# SUBIR PDF
-# ==========================================================
+st.set_page_config(
+    page_title="OCR Médicos",
+    page_icon="📄",
+    layout="wide"
+)
 
-print("Sube el archivo PDF")
-uploaded = files.upload()
+st.title("📄 OCR Médicos")
+st.write("Convierte PDF a TXT y Excel.")
 
-pdf_file = list(uploaded.keys())[0]
-print("Archivo cargado:", pdf_file)
-
-# ==========================================================
-# CONTAR PÁGINAS AUTOMÁTICAMENTE
-# ==========================================================
-
-reader = PdfReader(pdf_file)
-total_paginas = len(reader.pages)
-
-print(f"Total de páginas detectadas: {total_paginas}")
-
-# ==========================================================
-# FUNCIÓN PARA LIMPIAR TEXTO PARA EXCEL
-# ==========================================================
+archivo = st.file_uploader(
+    "Sube un archivo PDF",
+    type=["pdf"]
+)
 
 def limpiar_texto(texto):
     if texto is None:
@@ -47,76 +27,54 @@ def limpiar_texto(texto):
     texto = texto.replace("\f", "")
     return texto.strip()
 
-# ==========================================================
-# OCR PÁGINA POR PÁGINA
-# ==========================================================
+if archivo is not None:
+    st.success("PDF cargado correctamente")
+    st.write("Nombre:", archivo.name)
 
-txt_file = "resultado_ocr.txt"
-excel_file = "resultado_ocr.xlsx"
+    if st.button("Convertir a TXT y Excel"):
+        reader = PdfReader(archivo)
+        total_paginas = len(reader.pages)
 
-datos_excel = []
+        st.info(f"Total de páginas detectadas: {total_paginas}")
 
-with open(txt_file, "w", encoding="utf-8") as archivo_txt:
+        datos_excel = []
+        texto_total = ""
 
-    for pagina in range(1, total_paginas + 1):
+        barra = st.progress(0)
 
-        print(f"Procesando página {pagina}/{total_paginas}")
-
-        try:
-            imagen = convert_from_path(
-                pdf_file,
-                dpi=150,
-                first_page=pagina,
-                last_page=pagina
-            )[0]
-
-            texto = pytesseract.image_to_string(
-                imagen,
-                lang="spa",
-                config="--oem 3 --psm 6"
-            )
-
+        for i, pagina in enumerate(reader.pages, start=1):
+            texto = pagina.extract_text()
             texto = limpiar_texto(texto)
 
-            archivo_txt.write(f"\n\n===== PÁGINA {pagina} =====\n\n")
-            archivo_txt.write(texto)
+            texto_total += f"\n\n===== PÁGINA {i} =====\n\n{texto}"
 
             datos_excel.append({
-                "Pagina": pagina,
+                "Pagina": i,
                 "Texto extraido": texto
             })
 
-            del imagen
-            gc.collect()
+            barra.progress(i / total_paginas)
 
-        except Exception as e:
-            print(f"Error en página {pagina}: {e}")
+        df = pd.DataFrame(datos_excel)
 
-            datos_excel.append({
-                "Pagina": pagina,
-                "Texto extraido": f"ERROR OCR: {e}"
-            })
+        txt_bytes = texto_total.encode("utf-8")
 
-# ==========================================================
-# CREAR EXCEL
-# ==========================================================
+        excel_buffer = io.BytesIO()
+        df.to_excel(excel_buffer, index=False, engine="openpyxl")
+        excel_buffer.seek(0)
 
-df = pd.DataFrame(datos_excel)
+        st.success("Conversión finalizada")
 
-df.to_excel(
-    excel_file,
-    index=False,
-    engine="openpyxl"
-)
+        st.download_button(
+            label="Descargar TXT",
+            data=txt_bytes,
+            file_name="resultado_ocr.txt",
+            mime="text/plain"
+        )
 
-print("TXT generado:", txt_file)
-print("Excel generado:", excel_file)
-
-# ==========================================================
-# DESCARGAR ARCHIVOS
-# ==========================================================
-
-files.download(txt_file)
-files.download(excel_file)
-
-print("Proceso finalizado correctamente")
+        st.download_button(
+            label="Descargar Excel",
+            data=excel_buffer,
+            file_name="resultado_ocr.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
